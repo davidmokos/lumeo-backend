@@ -1,0 +1,5 @@
+modal>=0.71.0
+openai
+langgraph
+langchain-openai
+langchain-anthropic
