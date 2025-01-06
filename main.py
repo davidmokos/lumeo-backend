@@ -1,22 +1,9 @@
 import os
 import modal
+from src.common import sandbox_image, ai_image
 
 app = modal.App(name="learn-anything")
-sandbox_image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .apt_install("build-essential", "python3-dev", "libcairo2-dev", "libpango1.0-dev", "ffmpeg", "python3-pip", "texlive", "texlive-latex-extra")
-    .pip_install("manim")
-)
-
 vol = modal.Volume.from_name("learn-anything-vol", create_if_missing=True)
-
-ai_image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .pip_install("openai")
-    .pip_install("langgraph")
-    .pip_install("langchain-openai")
-    .pip_install("langchain-anthropic")
-)
 
 
 @app.function(volumes={"/data": vol})
