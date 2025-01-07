@@ -15,10 +15,6 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configure LangSmith
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
-os.environ["LANGCHAIN_PROJECT"] = "projectlearn"
 
 class SceneState(TypedDict):
     """State for the scene builder graph."""
@@ -52,26 +48,18 @@ class SceneBuilder:
     
     def __init__(
         self,
-        app: modal.App,
-        volume: modal.Volume,
+        sandbox: modal.Sandbox,
         model: str = "gpt-4",
         debug: bool = False
     ):
-        self.app = app
-        self.volume = volume
+        self.sandbox = sandbox
         self.model = model
         self.debug = debug
-        self.sandbox = self._create_sandbox()
         logger.info(f"Initialized SceneBuilder with model: {model}, debug: {debug}")
         
     def _create_sandbox(self) -> modal.Sandbox:
         """Creates a Modal sandbox with Manim dependencies."""
-        
-        return modal.Sandbox.create(
-            image=sandbox_image,
-            app=self.app,
-            volumes={"/data": self.volume}
-        )
+        raise NotImplementedError("Sandbox should be passed to constructor")
 
     def build_graph(self) -> StateGraph:
         """Builds the LangGraph for scene generation."""

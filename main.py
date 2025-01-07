@@ -1,7 +1,7 @@
 import os
 import modal
 import logging
-from src.common import sandbox_image, ai_image, secrets
+from src.common import sandbox_image, ai_image, secrets, volumes
 from src.scene_builder import SceneBuilder
 
 # Configure logging
@@ -9,14 +9,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = modal.App(name="learn-anything")
-vol = modal.Volume.from_name("learn-anything-vol", create_if_missing=True)
 
-@app.function(image=ai_image, volumes={"/data": vol}, secrets=secrets)
+@app.function(image=ai_image, volumes=volumes, secrets=secrets)
 def test_scene_builder():
     """Test the SceneBuilder agent with a simple concept."""
     try:
         logger.info("Starting scene builder test")
-        builder = SceneBuilder(app=app, volume=vol)
+        
+        # Create sandbox first
+        sandbox = modal.Sandbox.create(
+            image=sandbox_image,
+            app=app,
+            volumes=volumes
+        )
+        
+        # Initialize builder with sandbox
+        builder = SceneBuilder(
+            sandbox=sandbox
+        )
         
         # Example learning content
         description = "Introduction to Python Variables"
@@ -45,12 +55,12 @@ def test_scene_builder():
             details=details
         )
         
-        # logger.info(result)
-        
         logger.info(f"Scene generated successfully after {result['iterations']} iterations")
-        # logger.info(f"Output video saved to: {result['output_path']}")
         logger.info("\nGenerated Scene Code:")
         logger.info(result['scene_code'])
+        
+        # Clean up
+        sandbox.terminate()
         
         return result
         
@@ -58,10 +68,10 @@ def test_scene_builder():
         logger.error(f"Error in scene generation: {str(e)}", exc_info=True)
         raise
 
-@app.function(volumes={"/data": vol})
+@app.function(volumes=volumes)
 def test_manim():
     print("Hello World Manim")
-    sb = modal.Sandbox.create(app=app, image=sandbox_image, volumes={"/data": vol})
+    sb = modal.Sandbox.create(app=app, image=sandbox_image, volumes=volumes)
     
     with sb.open("/data/scene.py", "w") as f:
         f.write("""from manim import *

@@ -29,3 +29,7 @@ secrets = [
     modal.Secret.from_name("langsmith-secret", required_keys=["LANGCHAIN_API_KEY"]),
     modal.Secret.from_name("elevenlabs-secret", required_keys=["ELEVENLABS_API_KEY"]),
 ]
+
+volumes = {
+    "/data": modal.Volume.from_name("learn-anything-vol", create_if_missing=True)
+}
