@@ -1,4 +1,3 @@
-
 from .common import sandbox_image, ai_image
 from langgraph.graph import StateGraph
 from typing import TypedDict, Dict, Any
@@ -9,7 +8,17 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.output_parsers.openai_tools import PydanticToolsParser
 from langchain_core.utils.function_calling import convert_to_openai_tool
+import os
+import logging
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Configure LangSmith
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+os.environ["LANGCHAIN_PROJECT"] = "projectlearn"
 
 class SceneState(TypedDict):
     """State for the scene builder graph."""
@@ -29,9 +38,9 @@ class Decision(str, Enum):
 class SceneCode(BaseModel):
     """Generated scene code structure."""
     scene_name: str = Field(description="Name of the Manim scene class")
+    explanation: str = Field(description="Explanation of how the scene visualizes the concept")
     imports: str = Field(description="Import statements for the scene")
     scene_code: str = Field(description="The actual Manim scene code")
-    explanation: str = Field(description="Explanation of how the scene visualizes the concept")
 
 class SceneEvaluation(BaseModel):
     """Evaluation of scene execution."""
@@ -53,6 +62,7 @@ class SceneBuilder:
         self.model = model
         self.debug = debug
         self.sandbox = self._create_sandbox()
+        logger.info(f"Initialized SceneBuilder with model: {model}, debug: {debug}")
         
     def _create_sandbox(self) -> modal.Sandbox:
         """Creates a Modal sandbox with Manim dependencies."""
@@ -100,7 +110,12 @@ class SceneBuilder:
 
     def _generate_scene(self, state: SceneState) -> SceneState:
         """Generates Manim scene code based on the learning content description."""
-        llm = ChatOpenAI(temperature=0, model=self.model)
+        logger.info(f"Generating scene, iteration {state.get('iterations', 0) + 1}")
+        
+        llm = ChatOpenAI(
+            temperature=0, 
+            model=self.model,
+        )
         scene_tool = convert_to_openai_tool(SceneCode)
         llm_with_tool = llm.bind(
             tools=[scene_tool],
@@ -118,15 +133,28 @@ class SceneBuilder:
         Create a Manim scene that effectively visualizes this concept.
         The scene should be engaging, clear, and match the voiceover timing.
         
-        {previous_error}
+        Previous Iterations: {iterations}
+        Previous Scene Code: {previous_scene_code}
+        Previous Error: {previous_error}
+        
+        Important:
+        1. Keep animations simple and focused
+        2. Ensure all objects are properly initialized
+        3. Use basic shapes and transformations
+        4. Follow Manim best practices for scene construction
+        5. We're using Manim 0.18.1 - ShowCreation is obsolete, use Create function instead
+        6. Don't use triple quotes for generated code, use single quotes instead
         """
         
         prompt = PromptTemplate(
             template=template,
-            input_variables=["description", "voiceover", "details", "previous_error"]
+            input_variables=["description", "voiceover", "details", "previous_error", "iterations", "previous_scene_code"]
         )
         
-        previous_error = f"\nPrevious Error: {state['error']}" if state.get("error") else ""
+        previous_error = state.get("error", "")
+        iterations = state.get("iterations", 0)
+        
+        logger.info(f"Generating with previous error: {previous_error}")
         
         chain = prompt | llm_with_tool | parser
         
@@ -134,19 +162,24 @@ class SceneBuilder:
             "description": state["description"],
             "voiceover": state["voiceover"],
             "details": state["details"],
-            "previous_error": previous_error
+            "previous_error": previous_error,
+            "iterations": iterations,
+            "previous_scene_code": state["scene_code"]
         })
         
         scene_code = f"{scene[0].imports}\n\n{scene[0].scene_code}"
+        logger.info(f"Generated scene code with name: {scene[0].scene_name}")
         
         return {
             **state,
             "scene_code": scene_code,
-            "iterations": state.get("iterations", 0) + 1
+            "iterations": iterations + 1
         }
 
     def _execute_scene(self, state: SceneState) -> SceneState:
         """Executes the generated Manim scene in the sandbox."""
+        logger.info(f"Executing scene, iteration {state['iterations']}")
+        
         # Write scene to file
         with self.sandbox.open("/data/scene.py", "w") as f:
             f.write(state["scene_code"])
@@ -164,6 +197,10 @@ class SceneBuilder:
         output = result.stdout.read()
         error = result.stderr.read()
         
+        logger.info(f"Execution completed with error: {'None' if not error else 'Yes'}")
+        if error:
+            logger.error(f"Execution error: {error}")
+        
         return {
             **state,
             "output": output,
@@ -172,7 +209,12 @@ class SceneBuilder:
 
     def _evaluate_execution(self, state: SceneState) -> SceneState:
         """Evaluates the scene execution results."""
-        llm = ChatOpenAI(temperature=0, model=self.model)
+        logger.info(f"Evaluating execution, iteration {state['iterations']}")
+        
+        llm = ChatOpenAI(
+            temperature=0, 
+            model=self.model,
+        )
         eval_tool = convert_to_openai_tool(SceneEvaluation)
         llm_with_tool = llm.bind(
             tools=[eval_tool],
@@ -189,16 +231,30 @@ class SceneBuilder:
         Output:
         {output}
         
-        Error:
+        StdErr Output:
         {error}
         
-        Decide whether to finish (if successful) or retry (if there were errors).
-        Consider both technical success and whether the scene effectively visualizes the concept.
+        Current Iteration: {iterations}
+        Maximum Iterations: 5
+        
+        Decide whether to finish or retry. Consider:
+        1. Technical success (no errors)
+        2. Scene effectiveness (visualizes the concept well)
+        3. Current iteration (we must finish at iteration 5)
+        4. Scene complexity and feasibility
+        
+        If we're at iteration 5, you MUST choose to finish regardless of the result.
+        If retrying on earlier iterations, be specific about what needs to be fixed.
+        
+        Remember:
+        - A simple scene that works is better than a complex scene that fails
+        - We have limited iterations to get it right
+        - Focus on basic shapes and animations that are most likely to work
         """
         
         prompt = PromptTemplate(
             template=template,
-            input_variables=["scene_code", "output", "error"]
+            input_variables=["scene_code", "output", "error", "iterations"]
         )
         
         chain = prompt | llm_with_tool | parser
@@ -206,8 +262,12 @@ class SceneBuilder:
         evaluation = chain.invoke({
             "scene_code": state["scene_code"],
             "output": state["output"],
-            "error": state["error"]
+            "error": state["error"],
+            "iterations": state["iterations"]
         })
+        
+        logger.info(f"Evaluation decision: {evaluation[0].decision}")
+        logger.info(f"Evaluation explanation: {evaluation[0].explanation}")
         
         return {
             **state,
@@ -224,12 +284,44 @@ class SceneBuilder:
 
     def _should_retry(self, state: SceneState) -> str:
         """Decides whether to retry scene generation based on execution results."""
-        return "generate" if state["error"] != "None" else "evaluate"
+        iterations = state.get("iterations", 0)
+        has_error = not "File ready at" in state["output"] 
+        
+        logger.info(f"Checking retry condition - iterations: {iterations}, has_error: {has_error}")
+        
+        # If we've hit max iterations, go to evaluate even if there's an error
+        if iterations >= 5:
+            logger.info("Max iterations reached, forcing evaluation")
+            return "evaluate"
+            
+        # If there's an error and we haven't hit max iterations, retry
+        if has_error:
+            logger.info("Error detected, retrying generation")
+            return "generate"
+            
+        # No error, proceed to evaluation
+        logger.info("No error, proceeding to evaluation")
+        return "evaluate"
 
     def _should_finish(self, state: SceneState) -> str:
         """Decides whether to finish or retry based on evaluation."""
-        if state["evaluation"].decision == Decision.FINISH or state["iterations"] >= 3:
+        iterations = state.get("iterations", 0)
+        decision = state["evaluation"].decision
+        
+        logger.info(f"Checking finish condition - iterations: {iterations}, decision: {decision}")
+        
+        # Always finish if we've hit max iterations
+        if iterations >= 5:
+            logger.info("Max iterations reached, forcing finish")
             return "finish"
+            
+        # Finish if the evaluation says it's good
+        if decision == Decision.FINISH:
+            logger.info("Evaluation indicates success, finishing")
+            return "finish"
+            
+        # Otherwise retry if we haven't hit max iterations
+        logger.info("Evaluation indicates retry needed")
         return "generate"
 
     def generate_scene(
@@ -249,6 +341,7 @@ class SceneBuilder:
         Returns:
             Dict containing the final scene code and output video path
         """
+        logger.info("Starting scene generation")
         graph = self.build_graph()
         runnable = graph.compile()
         
@@ -262,5 +355,6 @@ class SceneBuilder:
             "iterations": 0
         })
         
+        logger.info(f"Scene generation completed after {result['iterations']} iterations")
         return result
 

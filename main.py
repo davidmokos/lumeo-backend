@@ -1,7 +1,12 @@
 import os
 import modal
+import logging
 from src.common import sandbox_image, ai_image, secrets
 from src.scene_builder import SceneBuilder
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = modal.App(name="learn-anything")
 vol = modal.Volume.from_name("learn-anything-vol", create_if_missing=True)
@@ -9,36 +14,49 @@ vol = modal.Volume.from_name("learn-anything-vol", create_if_missing=True)
 @app.function(image=ai_image, volumes={"/data": vol}, secrets=secrets)
 def test_scene_builder():
     """Test the SceneBuilder agent with a simple concept."""
-    builder = SceneBuilder(app=app, volume=vol)
-    
-    # Example learning content
-    description = "Introduction to Python Variables"
-    voiceover = "Variables in Python are like containers that store data. When we create a variable, Python allocates memory to store its value."
-    details = """
-    Create a visual scene that shows:
-    1. A container/box representing a variable
-    2. Text showing variable name 'x'
-    3. An arrow pointing from 'x' to the container
-    4. The number 42 appearing inside the container
-    5. Text showing 'x = 42' at the bottom
-    
-    The animation should:
-    1. First show the empty container
-    2. Then show the variable name
-    3. Draw the arrow
-    4. Finally show the value 42 appearing inside
-    """
-    
-    result = builder.generate_scene(
-        description=description,
-        voiceover=voiceover,
-        details=details
-    )
-    
-    print(f"Scene generated after {result['iterations']} iterations")
-    print(f"Output video saved to: {result['output_path']}")
-    print("\nGenerated Scene Code:")
-    print(result['scene_code'])
+    try:
+        logger.info("Starting scene builder test")
+        builder = SceneBuilder(app=app, volume=vol)
+        
+        # Example learning content
+        description = "Introduction to Python Variables"
+        voiceover = "Variables in Python are like containers that store data. When we create a variable, Python allocates memory to store its value."
+        details = """
+        Create a visual scene that shows:
+        1. A container/box representing a variable
+        2. Text showing variable name 'x'
+        3. An arrow pointing from 'x' to the container
+        4. The number 42 appearing inside the container
+        5. Text showing 'x = 42' at the bottom
+        
+        The animation should:
+        1. First show the empty container
+        2. Then show the variable name
+        3. Draw the arrow
+        4. Finally show the value 42 appearing inside
+        
+        Keep the scene simple and focused on these core elements.
+        Use basic shapes and clear animations.
+        """
+        
+        result = builder.generate_scene(
+            description=description,
+            voiceover=voiceover,
+            details=details
+        )
+        
+        # logger.info(result)
+        
+        logger.info(f"Scene generated successfully after {result['iterations']} iterations")
+        # logger.info(f"Output video saved to: {result['output_path']}")
+        logger.info("\nGenerated Scene Code:")
+        logger.info(result['scene_code'])
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in scene generation: {str(e)}", exc_info=True)
+        raise
 
 @app.function(volumes={"/data": vol})
 def test_manim():
@@ -66,7 +84,7 @@ def test_openai():
 
 @app.local_entrypoint()
 def main():
-    # print("Hello World")
-    # test_openai.remote()
-    test_scene_builder.remote()
+    logger.info("Starting main application")
+    result = test_scene_builder.remote()
+    logger.info("Scene generation completed")
 
