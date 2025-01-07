@@ -3,6 +3,7 @@ import modal
 import logging
 from src.common import sandbox_image, ai_image, secrets, volumes
 from src.scene_builder import SceneBuilder
+from src.voiceover_service import generate_audio, add_voiceover_and_subtitles
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -10,24 +11,25 @@ logger = logging.getLogger(__name__)
 
 app = modal.App(name="learn-anything")
 
+
 @app.function(image=ai_image, volumes=volumes, secrets=secrets)
 def test_scene_builder():
     """Test the SceneBuilder agent with a simple concept."""
     try:
         logger.info("Starting scene builder test")
-        
+
         # Create sandbox first
         sandbox = modal.Sandbox.create(
             image=sandbox_image,
             app=app,
             volumes=volumes
         )
-        
+
         # Initialize builder with sandbox
         builder = SceneBuilder(
             sandbox=sandbox
         )
-        
+
         # Example learning content
         description = "Introduction to Python Variables"
         voiceover = "Variables in Python are like containers that store data. When we create a variable, Python allocates memory to store its value."
@@ -48,31 +50,34 @@ def test_scene_builder():
         Keep the scene simple and focused on these core elements.
         Use basic shapes and clear animations.
         """
-        
+
         result = builder.generate_scene(
             description=description,
             voiceover=voiceover,
-            details=details
+            details=details,
+            output_path="/data/python_variables.mp4"
         )
-        
-        logger.info(f"Scene generated successfully after {result['iterations']} iterations")
+
+        logger.info(
+            f"Scene generated successfully after {result['iterations']} iterations")
         logger.info("\nGenerated Scene Code:")
         logger.info(result['scene_code'])
-        
+
         # Clean up
         sandbox.terminate()
-        
+
         return result
-        
+
     except Exception as e:
         logger.error(f"Error in scene generation: {str(e)}", exc_info=True)
         raise
+
 
 @app.function(volumes=volumes)
 def test_manim():
     print("Hello World Manim")
     sb = modal.Sandbox.create(app=app, image=sandbox_image, volumes=volumes)
-    
+
     with sb.open("/data/scene.py", "w") as f:
         f.write("""from manim import *
 class CreateCircle(Scene):
@@ -80,21 +85,35 @@ class CreateCircle(Scene):
         circle = Circle()
         circle.set_fill(PINK, opacity=0.5)
         self.play(Create(circle))""")
-    
-    b = sb.exec("manim", "render", "-ql", "/data/scene.py", "-o", "/data/output.mp4")
+
+    b = sb.exec("manim", "render", "-ql",
+                "/data/scene.py", "-o", "/data/output.mp4")
     print(b.stdout.read())
     print(b.stderr.read())
-    
+
     print(sb.exec("ls", "-la", "/data").stdout.read())
     print(sb.exec("ls", "-la", "/data").stderr.read())
 
-@app.function(image=ai_image)
-def test_openai():
-    print("Hello World OpenAI")
+
+@app.function(image=ai_image, volumes=volumes, secrets=secrets)
+def test_subtitle_service():
+    # Create sandbox first
+    sandbox = modal.Sandbox.create(
+        image=sandbox_image,
+        app=app,
+        volumes=volumes
+    )
+
+    add_voiceover_and_subtitles(
+        sandbox=sandbox, video_path="/data/output.mp4",
+        voiceover_text="Variables in Python are like containers that store data. When we create a variable, Python allocates memory to store its value. ariables in Python are like containers that store data. When we create a variable, Python allocates memory to store its value.",
+        output_video_path="/data/output_with_voiceover.mp4"
+    )
+
 
 @app.local_entrypoint()
 def main():
-    logger.info("Starting main application")
-    result = test_scene_builder.remote()
-    logger.info("Scene generation completed")
-
+    test_subtitle_service.remote()
+    # logger.info("Starting main application")
+    # result = test_scene_builder.remote()
+    # logger.info("Scene generation completed")

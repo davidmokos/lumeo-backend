@@ -33,15 +33,15 @@ class Decision(str, Enum):
 
 class SceneCode(BaseModel):
     """Generated scene code structure."""
-    scene_name: str = Field(description="Name of the Manim scene class")
     explanation: str = Field(description="Explanation of how the scene visualizes the concept")
     imports: str = Field(description="Import statements for the scene")
     scene_code: str = Field(description="The actual Manim scene code")
+    scene_name: str = Field(description="Name of the Manim scene class")
 
 class SceneEvaluation(BaseModel):
     """Evaluation of scene execution."""
-    decision: Decision = Field(description="Decision to finish or retry")
     explanation: str = Field(description="Explanation for the decision")
+    decision: Decision = Field(description="Decision to finish or retry")
 
 class SceneBuilder:
     """Agent that builds Manim scenes based on learning content descriptions."""
@@ -50,12 +50,9 @@ class SceneBuilder:
         self,
         sandbox: modal.Sandbox,
         model: str = "gpt-4",
-        debug: bool = False
     ):
         self.sandbox = sandbox
         self.model = model
-        self.debug = debug
-        logger.info(f"Initialized SceneBuilder with model: {model}, debug: {debug}")
         
     def _create_sandbox(self) -> modal.Sandbox:
         """Creates a Modal sandbox with Manim dependencies."""
@@ -172,6 +169,9 @@ class SceneBuilder:
         with self.sandbox.open("/data/scene.py", "w") as f:
             f.write(state["scene_code"])
         
+        # Get output path from state
+        output_path = state.get("output_path", "/data/output.mp4")
+        
         # Execute scene
         result = self.sandbox.exec(
             "manim",
@@ -179,7 +179,7 @@ class SceneBuilder:
             "-ql",  # medium quality, faster render
             "/data/scene.py",
             "-o",
-            "/data/output.mp4"
+            output_path
         )
         
         output = result.stdout.read()
@@ -192,7 +192,8 @@ class SceneBuilder:
         return {
             **state,
             "output": output,
-            "error": error if error else "None"
+            "error": error if error else "None",
+            "output_path": output_path
         }
 
     def _evaluate_execution(self, state: SceneState) -> SceneState:
@@ -266,7 +267,7 @@ class SceneBuilder:
         """Finalizes the scene generation process."""
         return {
             "scene_code": state["scene_code"],
-            "output_path": "/data/output.mp4",
+            "output_path": state["output_path"],
             "iterations": state["iterations"]
         }
 
@@ -316,7 +317,8 @@ class SceneBuilder:
         self,
         description: str,
         voiceover: str,
-        details: str
+        details: str,
+        output_path: str = "/data/output.mp4"
     ) -> Dict[str, Any]:
         """
         Generates a Manim scene based on the provided learning content.
@@ -325,11 +327,12 @@ class SceneBuilder:
             description: Short description of what we're learning
             voiceover: Current slide/scene voiceover text
             details: Detailed description of the slide
+            output_path: Path where the output video should be saved (default: /data/output.mp4)
             
         Returns:
             Dict containing the final scene code and output video path
         """
-        logger.info("Starting scene generation")
+        logger.info(f"Starting scene generation with output path: {output_path}")
         graph = self.build_graph()
         runnable = graph.compile()
         
@@ -340,7 +343,8 @@ class SceneBuilder:
             "scene_code": "",
             "output": "",
             "error": "",
-            "iterations": 0
+            "iterations": 0,
+            "output_path": output_path
         })
         
         logger.info(f"Scene generation completed after {result['iterations']} iterations")
