@@ -3,7 +3,8 @@ import modal
 import logging
 from src.common import sandbox_image, ai_image, secrets, volumes
 from src.scene_builder import SceneBuilder
-from src.voiceover_service import generate_audio, add_voiceover_and_subtitles
+from src.lecture_planner import LecturePlanner, Slide
+from src.voiceover_service import embed_audio_and_subtitles, generate_audio, add_voiceover_and_subtitles, merge_videos
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -109,11 +110,118 @@ def test_subtitle_service():
         voiceover_text="Variables in Python are like containers that store data. When we create a variable, Python allocates memory to store its value. ariables in Python are like containers that store data. When we create a variable, Python allocates memory to store its value.",
         output_video_path="/data/output_with_voiceover.mp4"
     )
+    
+    
 
+
+
+@app.function(image=ai_image, volumes=volumes, secrets=secrets)
+def generate_slide(slide: Slide, title: str, slide_id: int):
+    try:
+        logger.info("Generating slide")
+
+        # Create sandbox first
+        sandbox = modal.Sandbox.create(
+            image=sandbox_image,
+            app=app,
+            volumes=volumes
+        )
+
+        # Initialize builder with sandbox
+        builder = SceneBuilder(
+            sandbox=sandbox
+        )
+
+        result = builder.generate_scene(
+            description=title,
+            voiceover=slide.voiceover,
+            details=slide.description,
+            output_path=f"/data/slide_{slide_id}.mp4"
+        )
+
+        logger.info(
+            f"Scene generated successfully after {result['iterations']} iterations")
+        logger.info("\nGenerated Scene Code:")
+        logger.info(result['scene_code'])
+        
+        
+        add_voiceover_and_subtitles(
+            sandbox=sandbox,
+            video_path=f"/data/slide_{slide_id}.mp4",
+            voiceover_text=slide.voiceover,
+            output_video_path=f"/data/slide_{slide_id}_with_voiceover.mp4",
+            slide_id=slide_id
+        )
+
+        # Clean up
+        sandbox.terminate()
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error in scene generation: {str(e)}", exc_info=True)
+        raise
+
+
+@app.function(image=ai_image, volumes=volumes, secrets=secrets)
+def test_lecture_planner():
+    """Test the LecturePlanner with a sample topic."""
+    try:
+        logger.info("Starting lecture planner test")
+        
+        # Initialize planner
+        planner = LecturePlanner()
+        
+        # Example topic with resources
+        topic = "How does gene therapy work?"
+        resources = """
+
+        """
+        
+        # Generate lecture plan
+        lecture_plan = planner.plan_lecture(topic, resources)
+        
+        # Log the results
+        logger.info(f"\nGenerated Lecture Plan: {lecture_plan.title}")
+        for i, slide in enumerate(lecture_plan.slides, 1):
+            logger.info(f"\nSlide {i}:")
+            logger.info(f"Voiceover: {slide.voiceover}")
+            logger.info(f"Description: {slide.description}")
+        
+        # Generate slides
+        params = [(slide, lecture_plan.title, i) for i, slide in enumerate(lecture_plan.slides)]
+        for res in generate_slide.starmap(params, return_exceptions=True):
+            logger.info(res)
+        
+        return lecture_plan
+        
+    except Exception as e:
+        logger.error(f"Error in lecture planning: {str(e)}", exc_info=True)
+        raise
+
+
+@app.function(image=ai_image, volumes=volumes, secrets=secrets)
+def debug():
+    sandbox = modal.Sandbox.create(
+        image=sandbox_image,
+        app=app,
+        volumes=volumes
+    )
+    
+    video_paths = [f"/data/slide_{slide_id}_with_voiceover.mp4" for slide_id in range(5)]
+    merge_videos(sandbox, video_paths, "/data/merged_video.mp4")
+    
+    # for i in range(5):
+    #     slide_id = str(i)
+    #     final_video = embed_audio_and_subtitles(sandbox, f"/data/slide_{slide_id}.mp4", f"/data/voiceover_{slide_id}.mp3", f"/data/subtitles_{slide_id}.vtt", f"/data/slide_{slide_id}_with_voiceover.mp4")
+    # Clean up
+    sandbox.terminate()
 
 @app.local_entrypoint()
 def main():
-    test_subtitle_service.remote()
+    # test_lecture_planner.remote()
+    # test_subtitle_service.remote()
     # logger.info("Starting main application")
     # result = test_scene_builder.remote()
     # logger.info("Scene generation completed")
+    debug.remote()

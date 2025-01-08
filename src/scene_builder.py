@@ -25,6 +25,7 @@ class SceneState(TypedDict):
     output: str      # Output from scene execution
     error: str       # Any error messages
     iterations: int  # Number of attempts to generate/fix scene
+    output_path: str  # Path where the output video should be saved
 
 class Decision(str, Enum):
     """Possible decisions after evaluating scene generation."""

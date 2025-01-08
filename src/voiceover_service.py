@@ -26,7 +26,7 @@ def generate_audio(voiceover_text: str, output_path: str) -> str:
         client = ElevenLabs()
         audio = client.text_to_speech.convert(
             text=voiceover_text,
-            voice_id="JBFqnCBsd6RMkjVDRZzb",  # Rachel voice ID
+            voice_id="JBFqnCBsd6RMkjVDRZzb",
             model_id="eleven_multilingual_v2",
             output_format="mp3_44100_128",
         )
@@ -153,7 +153,8 @@ def add_voiceover_and_subtitles(
     sandbox: modal.Sandbox,
     video_path: str,
     voiceover_text: str,
-    output_video_path: str
+    output_video_path: str,
+    slide_id: str = ""
 ) -> str:
     """
     Adds voiceover and subtitles to a video.
@@ -171,9 +172,8 @@ def add_voiceover_and_subtitles(
     
     try:
         # Generate paths for intermediate files
-        base_dir = os.path.dirname(output_video_path)
-        audio_path = os.path.join(base_dir, "voiceover.mp3")
-        vtt_path = os.path.join(base_dir, "subtitles.vtt")
+        audio_path = f"/data/voiceover_{slide_id}.mp3"
+        vtt_path = f"/data/subtitles_{slide_id}.vtt"
         
         # Generate audio from text
         generate_audio(voiceover_text, audio_path)
@@ -188,4 +188,59 @@ def add_voiceover_and_subtitles(
         return final_video
     except Exception as e:
         logger.error(f"Error in voiceover and subtitles process: {str(e)}")
+        raise
+
+def merge_videos(sandbox: modal.Sandbox, video_paths: list[str], output_path: str) -> str:
+    """
+    Merges multiple videos into a single video file using ffmpeg.
+    
+    Args:
+        sandbox: Modal sandbox instance for running ffmpeg
+        video_paths: List of paths to input video files
+        output_path: Path where the merged video should be saved
+        
+    Returns:
+        Path to the merged video file
+    """
+    logger.info(f"Merging {len(video_paths)} videos")
+    
+    try:
+        # Create a temporary file list for ffmpeg concat
+        concat_file = "/data/concat_list.txt"
+        
+        # Write the file list in ffmpeg concat format
+        with sandbox.open(concat_file, "w") as f:
+            for video_path in video_paths:
+                f.write(f"file '{video_path}'\n")
+        
+        # Run ffmpeg concat demuxer
+        result = sandbox.exec(
+            "ffmpeg",
+            "-f", "concat",           # Use concat demuxer
+            "-safe", "0",             # Don't restrict files to relative paths
+            "-i", concat_file,        # Input file list
+            "-c", "copy",             # Copy streams without re-encoding
+            "-y",                     # Overwrite output file if exists
+            output_path
+        )
+        
+        # Wait for the process to complete
+        result.wait()
+        
+        if result.returncode != 0:
+            error = result.stderr.read()
+            raise Exception(f"ffmpeg error in video merging: {error}")
+        
+        # Clean up the temporary file
+        sandbox.exec("rm", "-f", concat_file).wait()
+        
+        logger.info(f"Videos merged successfully to {output_path}")
+        return output_path
+    except Exception as e:
+        logger.error(f"Error merging videos: {str(e)}")
+        # Clean up temporary file in case of error
+        try:
+            sandbox.exec("rm", "-f", concat_file).wait()
+        except:
+            pass
         raise
