@@ -5,9 +5,20 @@ from elevenlabs import VoiceSettings
 import openai
 import modal
 
+from src.database.lecture_repository import LectureRepository
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class VoiceoverService:
+    def __init__(self, lecture_id: str):
+        self.lecture_id = lecture_id
+        self.lecture_repo = LectureRepository()
+        
+        
+
 
 def generate_audio(voiceover_text: str, output_path: str) -> str:
     """
