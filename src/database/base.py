@@ -26,12 +26,12 @@ class Repository(Generic[T]):
         """Prepare data for database operations by serializing special types"""
         return {k: self._serialize_datetime(v) for k, v in data.items()}
 
-    async def get(self, id: str) -> Optional[T]:
+    def get(self, id: str) -> Optional[T]:
         """Get a single record by ID"""
         response = self.client.table(self.table_name).select("*").eq("id", id).execute()
         return self.model.model_validate(response.data[0]) if response.data else None
 
-    async def list(self, filters: Optional[Dict[str, Any]] = None) -> List[T]:
+    def list(self, filters: Optional[Dict[str, Any]] = None) -> List[T]:
         """List records with optional filters"""
         query = self.client.table(self.table_name).select("*")
         if filters:
@@ -41,7 +41,7 @@ class Repository(Generic[T]):
         response = query.execute()
         return [self.model.model_validate(item) for item in response.data]
 
-    async def create(self, data: T) -> T:
+    def create(self, data: T) -> T:
         """Create a new record"""
         create_data = data.model_dump(exclude={'id'}, exclude_none=True)
         create_data['created_at'] = datetime.now(UTC)
@@ -50,14 +50,14 @@ class Repository(Generic[T]):
         response = self.client.table(self.table_name).insert(create_data).execute()
         return self.model.model_validate(response.data[0])
 
-    async def update(self, id: str, data: Dict[str, Any]) -> Optional[T]:
+    def update(self, id: str, data: Dict[str, Any]) -> Optional[T]:
         """Update a record"""
         data['updated_at'] = datetime.now(UTC)
         data = self._prepare_data(data)
         response = self.client.table(self.table_name).update(data).eq("id", id).execute()
         return self.model.model_validate(response.data[0]) if response.data else None
 
-    async def delete(self, id: str) -> bool:
+    def delete(self, id: str) -> bool:
         """Delete a record"""
         response = self.client.table(self.table_name).delete().eq("id", id).execute()
         return bool(response.data) 

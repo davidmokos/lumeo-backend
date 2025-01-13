@@ -10,3 +10,4 @@ python-dotenv>=1.0.1
 typing-extensions>=4.12.2
 elevenlabs>=1.50.3
 supabase>=2.11.0
+ffmpeg-python>=0.2.0

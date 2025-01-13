@@ -10,6 +10,13 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 import os
 import logging
 
+from src.database.scene_repository import SceneRepository
+from src.database.storage import StorageBucket, StorageClient
+from src.schema.lecture import Lecture
+from src.schema.scene import Scene, SceneStatus
+from src.services.voiceover_service import embed_audio_and_subtitles, embed_audio_and_subtitles_new, generate_audio, generate_subtitles
+from src.common import read, vol
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,14 +24,14 @@ logger = logging.getLogger(__name__)
 
 class SceneState(TypedDict):
     """State for the scene builder graph."""
-    description: str  # Short description of what we're learning
-    voiceover: str   # Current slide/scene voiceover text
-    details: str     # Detailed description of the slide
+    lecture_topic: str  # Short description of what we're learning
+    scene_voiceover: str   # Current slide/scene voiceover text
+    scene_description: str     # Detailed description of the slide
     scene_code: str  # Generated Manim scene code
     output: str      # Output from scene execution
     error: str       # Any error messages
     iterations: int  # Number of attempts to generate/fix scene
-    output_path: str  # Path where the output video should be saved
+    scene_id: str  # ID of the scene
 
 class Decision(str, Enum):
     """Possible decisions after evaluating scene generation."""
@@ -54,10 +61,6 @@ class SceneBuilder:
         self.sandbox = sandbox
         self.model = model
         
-    def _create_sandbox(self) -> modal.Sandbox:
-        """Creates a Modal sandbox with Manim dependencies."""
-        raise NotImplementedError("Sandbox should be passed to constructor")
-
     def build_graph(self) -> StateGraph:
         """Builds the LangGraph for scene generation."""
         graph = StateGraph(SceneState)
@@ -111,9 +114,9 @@ class SceneBuilder:
         template = """
         You are a Manim expert tasked with creating a visual scene for a learning concept.
         
-        Topic Description: {description}
-        Voiceover Text: {voiceover}
-        Detailed Description: {details}
+        Topic Description: {lecture_topic}
+        Voiceover Text: {scene_voiceover}
+        Detailed Description: {scene_description}
         
         Create a Manim scene that effectively visualizes this concept.
         The scene should be engaging, clear, and match the voiceover timing.
@@ -127,26 +130,26 @@ class SceneBuilder:
         2. Ensure all objects are properly initialized
         3. Use basic shapes and transformations
         4. Follow Manim best practices for scene construction
-        5. We're using Manim 0.18.1 - ShowCreation is obsolete, use Create function instead
+        5. Don't use ShowCreation, always use Create instead
         6. Don't use triple quotes for generated code, use single quotes instead
         """
         
         prompt = PromptTemplate(
             template=template,
-            input_variables=["description", "voiceover", "details", "previous_error", "iterations", "previous_scene_code"]
+            input_variables=["lecture_topic", "scene_voiceover", "scene_description", "previous_error", "iterations", "previous_scene_code"]
         )
         
         previous_error = state.get("error", "")
         iterations = state.get("iterations", 0)
         
-        logger.info(f"Generating with previous error: {previous_error}")
+        # logger.info(f"Generating with previous error: {previous_error}")
         
         chain = prompt | llm_with_tool | parser
         
         scene = chain.invoke({
-            "description": state["description"],
-            "voiceover": state["voiceover"],
-            "details": state["details"],
+            "lecture_topic": state["lecture_topic"],
+            "scene_voiceover": state["scene_voiceover"],
+            "scene_description": state["scene_description"],
             "previous_error": previous_error,
             "iterations": iterations,
             "previous_scene_code": state["scene_code"]
@@ -166,34 +169,32 @@ class SceneBuilder:
         logger.info(f"Executing scene, iteration {state['iterations']}")
         
         # Write scene to file
-        with self.sandbox.open("/data/scene.py", "w") as f:
+        scene_file_path = f"/data/scene_{state['scene_id']}.py"
+        with self.sandbox.open(scene_file_path, "w") as f:
             f.write(state["scene_code"])
         
         # Get output path from state
-        output_path = state.get("output_path", "/data/output.mp4")
+        scene_output_path = f"/data/scene_{state['scene_id']}.mp4"
         
         # Execute scene
         result = self.sandbox.exec(
             "manim",
             "render",
             "-ql",  # medium quality, faster render
-            "/data/scene.py",
+            scene_file_path,
             "-o",
-            output_path
+            scene_output_path
         )
         
-        output = result.stdout.read()
-        error = result.stderr.read()
+        # Safely read stdout and stderr with error handling
         
-        logger.info(f"Execution completed with error: {'None' if not error else 'Yes'}")
-        if error:
-            logger.error(f"Execution error: {error}")
+        output = read(result.stdout)
+        error = read(result.stderr)
         
         return {
             **state,
             "output": output,
             "error": error if error else "None",
-            "output_path": output_path
         }
 
     def _evaluate_execution(self, state: SceneState) -> SceneState:
@@ -266,9 +267,7 @@ class SceneBuilder:
     def _finish(self, state: SceneState) -> Dict[str, Any]:
         """Finalizes the scene generation process."""
         return {
-            "scene_code": state["scene_code"],
-            "output_path": state["output_path"],
-            "iterations": state["iterations"]
+            **state
         }
 
     def _should_retry(self, state: SceneState) -> str:
@@ -315,38 +314,57 @@ class SceneBuilder:
 
     def generate_scene(
         self,
-        description: str,
-        voiceover: str,
-        details: str,
-        output_path: str = "/data/output.mp4"
-    ) -> Dict[str, Any]:
-        """
-        Generates a Manim scene based on the provided learning content.
-        
-        Args:
-            description: Short description of what we're learning
-            voiceover: Current slide/scene voiceover text
-            details: Detailed description of the slide
-            output_path: Path where the output video should be saved (default: /data/output.mp4)
-            
-        Returns:
-            Dict containing the final scene code and output video path
-        """
-        logger.info(f"Starting scene generation with output path: {output_path}")
+        lecture: Lecture,
+        scene: Scene
+    ) -> Scene:
+
+        logger.info(f"Starting scene generation")
         graph = self.build_graph()
         runnable = graph.compile()
         
         result = runnable.invoke({
-            "description": description,
-            "voiceover": voiceover,
-            "details": details,
+            "lecture_topic": lecture.topic,
+            "scene_voiceover": scene.voiceover,
+            "scene_description": scene.description,
             "scene_code": "",
             "output": "",
             "error": "",
             "iterations": 0,
-            "output_path": output_path
+            "scene_id": scene.id
         })
         
-        logger.info(f"Scene generation completed after {result['iterations']} iterations")
-        return result
-
+        scene_video_path = f"/data/scene_{scene.id}.mp4"
+        scene_audio_path = f"/data/scene_{scene.id}.mp3"
+        scene_subtitles_path = f"/data/scene_{scene.id}.vtt"
+        full_video_path = f"/data/scene_{scene.id}_full.mp4"
+        
+        generate_audio(voiceover_text=scene.voiceover, output_path=scene_audio_path)
+        generate_subtitles(audio_path=scene_audio_path, vtt_file_path=scene_subtitles_path)
+        vol.commit()
+        
+        embed_audio_and_subtitles_new(
+            # sandbox=self.sandbox,
+            video_path=scene_video_path,
+            audio_path=scene_audio_path,
+            vtt_file_path=scene_subtitles_path,
+            output_path=full_video_path
+        )
+        
+        storage_client = StorageClient()
+        video_url = storage_client.upload_file(
+            bucket=StorageBucket.SCENES,
+            file_path=full_video_path,
+            destination_path=f"{scene.id}/video.mp4"
+        )
+        
+        scene_repository = SceneRepository()
+        new_scene = scene_repository.update(scene.id, {
+            "status": SceneStatus.COMPLETED,
+            "code": result["scene_code"],
+            "video_url": video_url
+        })
+        
+        vol.commit()
+        
+        logger.info(f"Scene generation completed")
+        return new_scene

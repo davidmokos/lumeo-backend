@@ -36,7 +36,7 @@ async def generate_lecture(
         resources=request.resources,
         status=LectureStatus.PROCESSING
     )
-    created_lecture = await lecture_repo.create(lecture)
+    created_lecture = lecture_repo.create(lecture)
     
     # Spawn a generate_lecture_function
     generate_lecture_function.spawn(created_lecture)

@@ -18,7 +18,7 @@ class StorageClient:
     def __init__(self):
         self.client = SupabaseClient.get_client().storage
         
-    async def upload_file(
+    def upload_file(
         self,
         bucket: StorageBucket,
         file_path: Path,
@@ -29,7 +29,8 @@ class StorageClient:
             response = self.client.from_(bucket.value).upload(
                 path=destination_path,
                 file=f,
-                file_options={"content-type": "auto"}
+                file_options={"content-type": "auto", "upsert": "true"}
+                
             )
             
         return self.client.from_(bucket.value).get_public_url(destination_path)
@@ -57,7 +58,37 @@ class StorageClient:
                     destination_path=destination_path
                 )
     
-    async def delete_file(self, bucket: StorageBucket, file_path: str) -> bool:
+    def download_file(
+        self,
+        bucket: StorageBucket,
+        file_path: str,
+        destination_path: Path
+    ) -> bool:
+        """Download a file from storage to local filesystem
+        
+        Args:
+            bucket: Storage bucket to use
+            file_path: Path to the file in the bucket
+            destination_path: Local path where to save the file
+            
+        Returns:
+            True if download was successful
+        """
+        try:
+            response = self.client.from_(bucket.value).download(file_path)
+            
+            # Ensure parent directories exist
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write the downloaded content to file
+            with open(destination_path, 'wb') as f:
+                f.write(response)
+                
+            return True
+        except Exception:
+            return False
+            
+    def delete_file(self, bucket: StorageBucket, file_path: str) -> bool:
         """Delete a file from storage
         
         Args:

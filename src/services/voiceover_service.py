@@ -4,19 +4,31 @@ from elevenlabs.client import ElevenLabs
 from elevenlabs import VoiceSettings
 import openai
 import modal
+import ffmpeg
 
 from src.database.lecture_repository import LectureRepository
+from src.database.storage import StorageClient
+from src.schema.lecture import Lecture
+from src.schema.scene import Scene
+
+from src.common import vol
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class VoiceoverService:
-    def __init__(self, lecture_id: str):
-        self.lecture_id = lecture_id
-        self.lecture_repo = LectureRepository()
-        
+# class VoiceoverService:
+#     def __init__(self, lecture_id: str):
+#         self.lecture_id = lecture_id
+#         self.lecture_repo = LectureRepository()
+#         self.storage_client = StorageClient()
+    
+#     def add_audio(self, scene: Scene) -> Scene:
+#         pass
+    
+#     def merge_scenes(self, scenes: list[Scene]) -> Lecture:
+#         pass
         
 
 
@@ -103,6 +115,10 @@ def embed_audio_and_subtitles(sandbox: modal.Sandbox, video_path: str, audio_pat
     """
     logger.info(f"Embedding audio and subtitles into video: {video_path}")
     
+    vol.reload()
+    
+    logger.info(sandbox.ls(path="/data"))
+    
     try:
         # Step 1: Combine video and audio
         temp_output = output_path + ".temp.mp4"
@@ -160,6 +176,67 @@ def embed_audio_and_subtitles(sandbox: modal.Sandbox, video_path: str, audio_pat
             pass
         raise
 
+def embed_audio_and_subtitles_new(video_path: str, audio_path: str, vtt_file_path: str, output_path: str) -> str:
+    """
+    Embeds audio and subtitles into a video using ffmpeg-python.
+    
+    Args:
+        video_path: Path to the input video
+        audio_path: Path to the audio file
+        vtt_file_path: Path to the VTT subtitle file
+        output_path: Path where the output video should be saved
+        
+    Returns:
+        Path to the output video with embedded audio and subtitles
+    """
+    logger.info(f"Embedding audio and subtitles into video: {video_path}")
+    
+    try:
+        # Step 1: Combine video and audio
+        temp_output = output_path + ".temp.mp4"
+        
+        # First step: combine video and audio
+        video = ffmpeg.input(video_path)
+        audio = ffmpeg.input(audio_path)
+        
+        combined = ffmpeg.output(
+            video.video,
+            audio.audio,
+            temp_output,
+            vcodec='copy',  # Copy video without re-encoding
+            acodec='aac',   # Convert audio to AAC
+            y=None          # Overwrite output file if exists
+        )
+        combined.run(overwrite_output=True)
+            
+        # Step 2: Add subtitles
+        combined_video = ffmpeg.input(temp_output)
+        subtitles = ffmpeg.input(vtt_file_path)
+        
+        final = ffmpeg.output(
+            combined_video,
+            subtitles,
+            output_path,
+            vcodec='copy',     # Copy video without re-encoding
+            acodec='copy',     # Copy audio without re-encoding
+            scodec='mov_text', # Subtitle codec for MP4
+            y=None             # Overwrite output file if exists
+        )
+        final.run(overwrite_output=True)
+        
+        # Clean up temporary file
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
+        
+        logger.info(f"Video with audio and subtitles saved to {output_path}")
+        return output_path
+    except Exception as e:
+        logger.error(f"Error embedding audio and subtitles: {str(e)}")
+        # Clean up temporary file in case of error
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
+        raise
+
 def add_voiceover_and_subtitles(
     sandbox: modal.Sandbox,
     video_path: str,
@@ -193,7 +270,7 @@ def add_voiceover_and_subtitles(
         generate_subtitles(audio_path, vtt_path)
         
         # Embed subtitles in video
-        final_video = embed_audio_and_subtitles(sandbox, video_path, audio_path, vtt_path, output_video_path)
+        final_video = embed_audio_and_subtitles_new(video_path, audio_path, vtt_path, output_video_path)
         
         logger.info("Voiceover and subtitles process completed successfully")
         return final_video
