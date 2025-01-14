@@ -1,5 +1,6 @@
 import os
 import logging
+import uuid
 from elevenlabs.client import ElevenLabs
 from elevenlabs import VoiceSettings
 import openai
@@ -294,7 +295,7 @@ def merge_videos(sandbox: modal.Sandbox, video_paths: list[str], output_path: st
     
     try:
         # Create a temporary file list for ffmpeg concat
-        concat_file = "/data/concat_list.txt"
+        concat_file = f"/data/concat_list_{uuid.uuid4()}.txt"
         
         # Write the file list in ffmpeg concat format
         with sandbox.open(concat_file, "w") as f:
@@ -323,6 +324,7 @@ def merge_videos(sandbox: modal.Sandbox, video_paths: list[str], output_path: st
         sandbox.exec("rm", "-f", concat_file).wait()
         
         logger.info(f"Videos merged successfully to {output_path}")
+        vol.commit()
         return output_path
     except Exception as e:
         logger.error(f"Error merging videos: {str(e)}")

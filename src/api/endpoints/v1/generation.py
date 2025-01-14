@@ -1,4 +1,4 @@
-from src.api.functions import generate_lecture_function
+from src.api.functions import generate_lecture_function, generate_lecture_no_plan_function
 from src.schema.lecture import Lecture, LectureStatus
 from src.database.lecture_repository import LectureRepository
 from typing import Optional
@@ -43,3 +43,20 @@ async def generate_lecture(
     
     # return the lecture id
     return LectureGenerationResponse(lecture_id=created_lecture.id)
+
+@router.post("/{uid}/lecture/{lecture_id}", response_model=LectureGenerationResponse)
+async def generate_lecture(
+    uid: str,
+    lecture_id: str,
+) -> LectureGenerationResponse:
+    # Create lecture in the database
+    lecture_repo = LectureRepository()
+    lecture = lecture_repo.get(lecture_id)
+    if lecture is None:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+    
+    # Spawn a generate_lecture_function
+    generate_lecture_no_plan_function.spawn(lecture)
+    
+    # return the lecture id
+    return LectureGenerationResponse(lecture_id=lecture.id)

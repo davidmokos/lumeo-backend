@@ -1,5 +1,7 @@
+import os
 import modal
 import asyncio
+import requests
 from src.common import ai_image, volumes, secrets, sandbox_image
 from src.agents.lecture_planner import LecturePlanner
 from src.agents.scene_builder import SceneBuilder
@@ -11,7 +13,7 @@ from src.database.storage import StorageClient, StorageBucket
 from src.schema.scene import Scene, SceneStatus
 from src.services.voiceover_service import add_voiceover_and_subtitles, merge_videos
 import logging
-
+from src.common import vol
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ def merge_scenes_function(lecture: Lecture, scenes: list[Scene]) -> Lecture:
         lecture_repo = LectureRepository()
         storage = StorageClient()
 
+        vol.reload()
         # Download videos
         video_paths = []
         for scene in scenes:
@@ -34,8 +37,20 @@ def merge_scenes_function(lecture: Lecture, scenes: list[Scene]) -> Lecture:
                 continue
             
             local_path = f"/data/scene_{scene.id}_full.mp4"
-            storage.download_file(scene.video_url, local_path)
+            if os.path.exists(local_path):
+                logger.info(f"Scene {scene.id} video already exists, skipping download")
+                video_paths.append(local_path)
+                continue
+            
+            response = requests.get(scene.video_url, stream=True)
+            response.raise_for_status()
+            with open(local_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
             video_paths.append(local_path)
+        
+        vol.commit()
+        vol.reload()
 
         if not video_paths:
             raise ValueError("No videos available to merge")
@@ -55,10 +70,11 @@ def merge_scenes_function(lecture: Lecture, scenes: list[Scene]) -> Lecture:
         sandbox.terminate()
 
         # Upload merged video
+        vol.reload()
         video_url = storage.upload_file(
-            merged_video_path,
-            f"lectures/{lecture.id}/final.mp4",
-            bucket=StorageBucket.VIDEOS
+            bucket=StorageBucket.LECTURES,
+            file_path=merged_video_path,
+            destination_path=f"{lecture.id}/final.mp4"
         )
 
         # Update lecture
@@ -143,7 +159,38 @@ def generate_lecture_function(lecture: Lecture):
         generated_scenes = []
         for res in generate_scene_function.starmap(map(lambda s: (lecture, s), scenes), return_exceptions=True):
             if isinstance(res, Scene):
-                logger.info(f"Scene {res.id} generated successfully")
+                generated_scenes.append(res)
+            else:
+                logger.error(f"Error generating scene: {res}")
+                
+        generated_scenes.sort(key=lambda x: x.index)
+        
+        merge_scenes_function.remote(lecture, generated_scenes)
+        
+        logger.info("Lecture generation complete")
+        
+    except Exception as e:
+        logger.error(f"Error in lecture generation: {str(e)}")
+        raise
+
+
+@app.function(image=ai_image, volumes=volumes, secrets=secrets)
+def generate_lecture_no_plan_function(lecture: Lecture):
+    """Generate a lecture without a plan"""
+    try:
+        logger.info(f"Starting lecture generation for topic: {lecture.topic}")
+        lecture_repo = LectureRepository()
+        scene_repo = SceneRepository()
+        
+
+        lecture_repo.update(lecture.id, {"status": LectureStatus.PROCESSING})
+        
+        scenes = scene_repo.list_by_lecture(lecture_id=lecture.id)
+         
+        # Generate scenes
+        generated_scenes = []
+        for res in generate_scene_function.starmap(map(lambda s: (lecture, s), scenes), return_exceptions=True):
+            if isinstance(res, Scene):
                 generated_scenes.append(res)
             else:
                 logger.error(f"Error generating scene: {res}")
@@ -163,25 +210,20 @@ def debug_function():
     lecture_repo = LectureRepository()
     scene_repo = SceneRepository()
     
-    lecture = lecture_repo.get("0cf35e16-2b2c-4903-8add-c71252d23fae")
-    scene = scene_repo.get("c1655081-6e58-4e9c-b406-e2ef0248d638")
+    lecture = lecture_repo.get("43edbf3f-a9f6-4b7c-914d-1d5b5bdc6a0d")
+    scenes = scene_repo.list_by_lecture(lecture_id=lecture.id)
+    
+    scenes.sort(key=lambda x: x.index)
+    
+    for scene in scenes:
+        print(scene.id)
     
     
-    sandbox = modal.Sandbox.create(
-        image=sandbox_image,
-        app=app,
-        volumes=volumes
-    )
-
-    # Initialize builder with sandbox
-    builder = SceneBuilder(
-        sandbox=sandbox
-    )
-
-    result = builder.generate_scene(
-        lecture=lecture,
-        scene=scene
-    )
+    for scene in scenes:
+        print(scene.voiceover)
+        print("--------------------------------")
+    
+    merge_scenes_function.remote(lecture, scenes)
     
     # generate_scene_function.remote(
     #     lecture=lecture,

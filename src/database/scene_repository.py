@@ -6,6 +6,6 @@ class SceneRepository(Repository[Scene]):
     def __init__(self):
         super().__init__("scenes", Scene)
         
-    async def list_by_lecture(self, lecture_id: str) -> list[Scene]:
+    def list_by_lecture(self, lecture_id: str) -> list[Scene]:
         """Get all scenes for a specific lecture"""
-        return await self.list(filters={"lecture_id": lecture_id}) 
+        return self.list(filters={"lecture_id": lecture_id}) 

@@ -111,28 +111,135 @@ class SceneBuilder:
         )
         parser = PydanticToolsParser(tools=[SceneCode])
         
-        template = """
-        You are a Manim expert tasked with creating a visual scene for a learning concept.
+        template = """You are a Manim expert tasked with creating a visual scene for a learning concept.
+
+Topic Description: {lecture_topic}
+Voiceover Text: {scene_voiceover}
+Detailed Description: {scene_description}
+
+Create a Manim scene that effectively visualizes this concept.
+The scene should be engaging, clear, and match the voiceover timing.
+
+Previous Iterations: {iterations}
+Previous Scene Code: {previous_scene_code}
+Previous Error: {previous_error}
+
+Important:
+1. Keep animations simple and focused
+2. Ensure all objects are properly initialized
+3. Use basic shapes and transformations
+4. Follow Manim best practices for scene construction
+5. Don't use ShowCreation, always use Create instead
+6. Don't use triple quotes for generated code, use single quotes instead
+
+# Essential Manim Scene Patterns
+
+from manim import *
+
+# 1. Basic Scene with Animation
+class BasicScene(Scene):
+    def construct(self):
+        # Create objects
+        circle = Circle(radius=1, color=BLUE)
+        square = Square(color=RED)
         
-        Topic Description: {lecture_topic}
-        Voiceover Text: {scene_voiceover}
-        Detailed Description: {scene_description}
+        # Basic animations
+        self.play(Create(circle))
+        self.play(Transform(circle, square))
+        self.wait()
+
+# 2. Mathematical Equations
+class MathScene(Scene):
+    def construct(self):
+        # LaTeX equations
+        equation = MathTex(r"\sum_{{n=1}}^\infty \frac{{1}}{{n^2}} = \frac{{\pi^2}}{{6}}")
+        text = Tex(r"This is \LaTeX")
         
-        Create a Manim scene that effectively visualizes this concept.
-        The scene should be engaging, clear, and match the voiceover timing.
+        VGroup(text, equation).arrange(DOWN)
+        self.play(Write(text), FadeIn(equation))
+
+# 3. Coordinate System and Graphs
+class GraphScene(Scene):
+    def construct(self):
+        axes = Axes(
+            x_range=[-3, 3],
+            y_range=[-3, 3],
+            tips=False
+        )
         
-        Previous Iterations: {iterations}
-        Previous Scene Code: {previous_scene_code}
-        Previous Error: {previous_error}
+        # Plot function
+        graph = axes.plot(lambda x: np.sin(x), color=BLUE)
+        self.add(axes, graph)
+
+# 4. Moving Objects with Updaters
+class UpdaterScene(Scene):
+    def construct(self):
+        dot = Dot()
+        line = Line(ORIGIN, RIGHT * 3)
         
-        Important:
-        1. Keep animations simple and focused
-        2. Ensure all objects are properly initialized
-        3. Use basic shapes and transformations
-        4. Follow Manim best practices for scene construction
-        5. Don't use ShowCreation, always use Create instead
-        6. Don't use triple quotes for generated code, use single quotes instead
-        """
+        # Add updater to dot
+        dot.add_updater(lambda d: d.move_to(line.get_start()))
+        self.add(dot, line)
+        self.play(line.animate.shift(UP * 2))
+
+# 5. 3D Scene
+class ThreeDScene(ThreeDScene):
+    def construct(self):
+        axes = ThreeDAxes()
+        sphere = Surface(
+            lambda u, v: np.array([
+                np.cos(u) * np.cos(v),
+                np.cos(u) * np.sin(v),
+                np.sin(u)
+            ]),
+            v_range=[0, TAU],
+            u_range=[-PI/2, PI/2]
+        )
+        
+        self.set_camera_orientation(phi=75 * DEGREES, theta=30 * DEGREES)
+        self.add(axes, sphere)
+
+# 6. Value Tracker for Animations
+class ValueTrackerScene(Scene):
+    def construct(self):
+        tracker = ValueTracker(0)
+        
+        # Create object that depends on tracker
+        dot = Dot().add_updater(
+            lambda d: d.set_x(tracker.get_value())
+        )
+        
+        self.add(dot)
+        self.play(tracker.animate.set_value(5))
+
+# 7. Geometric Transformations
+class TransformScene(Scene):
+    def construct(self):
+        circle = Circle()
+        square = Square()
+        
+        self.play(
+            circle.animate.scale(2).set_color(RED),
+            rate_func=smooth
+        )
+        self.play(
+            circle.animate.apply_function(
+                lambda p: p + np.array([np.sin(p[1]), np.cos(p[0]), 0])
+            )
+        )
+
+# Common Animation Patterns:
+# 1. Creation: Create(), Write(), FadeIn()
+# 2. Transformation: Transform(), ReplacementTransform()
+# 3. Movement: .animate.shift(), .animate.move_to(), MoveAlongPath()
+# 4. Fading: FadeOut(), FadeIn()
+# 5. Updating: add_updater(), remove_updater()
+
+# Common Properties:
+# - Color: set_color(), set_fill(), set_stroke()
+# - Position: move_to(), shift(), next_to()
+# - Size: scale(), stretch()
+# - Grouping: VGroup(), Group()"""
         
         prompt = PromptTemplate(
             template=template,
@@ -185,6 +292,8 @@ class SceneBuilder:
             "-o",
             scene_output_path
         )
+        
+        vol.commit()
         
         # Safely read stdout and stderr with error handling
         
@@ -333,14 +442,33 @@ class SceneBuilder:
             "scene_id": scene.id
         })
         
+        vol.commit()
+        vol.reload()
+        
+        scene_repository = SceneRepository()
         scene_video_path = f"/data/scene_{scene.id}.mp4"
+        
+        # if video does not exist, update status to failed
+        if not os.path.exists(scene_video_path):
+            logger.info(f"Scene {scene.id} video not found, marking as failed")
+            scene_repository.update(scene.id, {
+                "status": SceneStatus.FAILED,
+                "code": result["scene_code"],
+            })
+            return scene
+        
         scene_audio_path = f"/data/scene_{scene.id}.mp3"
         scene_subtitles_path = f"/data/scene_{scene.id}.vtt"
         full_video_path = f"/data/scene_{scene.id}_full.mp4"
         
+        vol.commit()
+        vol.reload()
         generate_audio(voiceover_text=scene.voiceover, output_path=scene_audio_path)
+        vol.commit()
+        vol.reload()
         generate_subtitles(audio_path=scene_audio_path, vtt_file_path=scene_subtitles_path)
         vol.commit()
+        vol.reload()
         
         embed_audio_and_subtitles_new(
             # sandbox=self.sandbox,
@@ -357,7 +485,7 @@ class SceneBuilder:
             destination_path=f"{scene.id}/video.mp4"
         )
         
-        scene_repository = SceneRepository()
+        
         new_scene = scene_repository.update(scene.id, {
             "status": SceneStatus.COMPLETED,
             "code": result["scene_code"],
