@@ -11,7 +11,7 @@ from src.schema.lecture import Lecture, LectureStatus
 from src.database.lecture_repository import LectureRepository
 from src.database.storage import StorageClient, StorageBucket
 from src.schema.scene import Scene, SceneStatus
-from src.services.voiceover_service import add_voiceover_and_subtitles, merge_videos
+from src.services.voiceover_service import add_voiceover_and_subtitles, create_empty_video, merge_videos
 import logging
 from src.common import vol
 # Configure logging
@@ -210,25 +210,41 @@ def debug_function():
     lecture_repo = LectureRepository()
     scene_repo = SceneRepository()
     
-    lecture = lecture_repo.get("43edbf3f-a9f6-4b7c-914d-1d5b5bdc6a0d")
-    scenes = scene_repo.list_by_lecture(lecture_id=lecture.id)
+    # lecture = lecture_repo.get("43edbf3f-a9f6-4b7c-914d-1d5b5bdc6a0d")
+    # scenes = scene_repo.list_by_lecture(lecture_id=lecture.id)
     
-    scenes.sort(key=lambda x: x.index)
+    # scenes.sort(key=lambda x: x.index)
     
-    for scene in scenes:
-        print(scene.id)
+    # for scene in scenes:
+    #     print(scene.id)
     
     
-    for scene in scenes:
-        print(scene.voiceover)
-        print("--------------------------------")
+    # for scene in scenes:
+    #     print(scene.voiceover)
+    #     print("--------------------------------")
     
-    merge_scenes_function.remote(lecture, scenes)
+    # merge_scenes_function.remote(lecture, scenes)
     
     # generate_scene_function.remote(
     #     lecture=lecture,
     #     scene=scene
     # )
+    
+    
+    sandbox = modal.Sandbox.create(
+        image=sandbox_image,
+        app=app,
+        volumes=volumes
+    )
+    
+    create_empty_video(
+        output_path="/data/empty.mp4"
+    )
+    
+    
+    sandbox.terminate()
+
+    
 
 @app.local_entrypoint()
 def main():

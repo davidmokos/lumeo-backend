@@ -9,6 +9,7 @@ from langchain.output_parsers.openai_tools import PydanticToolsParser
 from langchain_core.utils.function_calling import convert_to_openai_tool
 import os
 import logging
+from langsmith import Client as LangsmithClient
 
 from src.database.scene_repository import SceneRepository
 from src.database.storage import StorageBucket, StorageClient
@@ -56,7 +57,7 @@ class SceneBuilder:
     def __init__(
         self,
         sandbox: modal.Sandbox,
-        model: str = "gpt-4",
+        model: str = "gpt-4o",
     ):
         self.sandbox = sandbox
         self.model = model
@@ -426,7 +427,7 @@ class TransformScene(Scene):
         lecture: Lecture,
         scene: Scene
     ) -> Scene:
-
+        
         logger.info(f"Starting scene generation")
         graph = self.build_graph()
         runnable = graph.compile()
@@ -448,14 +449,11 @@ class TransformScene(Scene):
         scene_repository = SceneRepository()
         scene_video_path = f"/data/scene_{scene.id}.mp4"
         
-        # if video does not exist, update status to failed
+        # if video does not exist, create an empty video as fallback
         if not os.path.exists(scene_video_path):
-            logger.info(f"Scene {scene.id} video not found, marking as failed")
-            scene_repository.update(scene.id, {
-                "status": SceneStatus.FAILED,
-                "code": result["scene_code"],
-            })
-            return scene
+            logger.info(f"Scene {scene.id} video not generated, creating empty video as fallback")
+            from src.services.voiceover_service import create_empty_video
+            create_empty_video(scene_video_path)
         
         scene_audio_path = f"/data/scene_{scene.id}.mp3"
         scene_subtitles_path = f"/data/scene_{scene.id}.vtt"
@@ -496,3 +494,4 @@ class TransformScene(Scene):
         
         logger.info(f"Scene generation completed")
         return new_scene
+    

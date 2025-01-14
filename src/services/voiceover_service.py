@@ -238,6 +238,23 @@ def embed_audio_and_subtitles_new(video_path: str, audio_path: str, vtt_file_pat
             os.remove(temp_output)
         raise
 
+def create_empty_video(output_path: str) -> str:
+    """
+    Creates a very short empty video file using ffmpeg.
+    The video will be 1 second long with a black background.
+    """
+    try:
+        # Create a 1-second black video using proper color source syntax
+        stream = ffmpeg.input('color=size=1920x1080:rate=30:duration=1:color=black', f='lavfi')
+        stream = ffmpeg.output(stream, output_path, vcodec='libx264', pix_fmt='yuv420p')
+        ffmpeg.run(stream, overwrite_output=True)
+        
+        logger.info(f"Created empty video at {output_path}")
+        return output_path
+    except Exception as e:
+        logger.error(f"Error creating empty video: {str(e)}")
+        raise
+
 def add_voiceover_and_subtitles(
     sandbox: modal.Sandbox,
     video_path: str,
