@@ -351,3 +351,46 @@ def merge_videos(sandbox: modal.Sandbox, video_paths: list[str], output_path: st
         except:
             pass
         raise
+
+def get_last_frame(sandbox: modal.Sandbox, video_path: str, output_path: str) -> str:
+    """
+    Gets the last frame of a video using ffmpeg.
+    
+    Args:
+        sandbox: Modal sandbox instance for running ffmpeg
+        video_path: Path to the input video
+        
+    Returns:
+        Path to the extracted last frame image (PNG format)
+    """
+    logger.info(f"Extracting last frame from video: {video_path}")
+    
+    try:
+        # Extract the last frame using -sseof
+        result = sandbox.exec(
+            "ffmpeg",
+            "-sseof", "-3",     # Seek 3 seconds before end of file
+            "-i", video_path,
+            "-vsync", "0",      # Prevent frame dropping
+            "-frames:v", "1",    # Extract only one frame
+            "-q:v", "2",        # High quality (2-31, lower is better)
+            "-update", "true",   # Update mode for single frame
+            "-y",               # Overwrite output file
+            output_path
+        )
+        
+        result.wait()
+        
+        if result.returncode != 0:
+            error = result.stderr.read()
+            raise Exception(f"ffmpeg error in frame extraction: {error}")
+        
+        logger.info(f"Last frame extracted to {output_path}")
+        vol.commit()
+        return output_path
+        
+    except Exception as e:
+        logger.error(f"Error extracting last frame: {str(e)}")
+        raise
+
+    

@@ -3,10 +3,10 @@ from typing import TypedDict, Dict, Any
 import modal
 from pydantic import BaseModel, Field
 from enum import Enum
-from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain_anthropic.chat_models import convert_to_anthropic_tool
 from langchain.prompts import PromptTemplate
 from langchain.output_parsers.openai_tools import PydanticToolsParser
-from langchain_core.utils.function_calling import convert_to_openai_tool
 import os
 import logging
 from langsmith import Client as LangsmithClient
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 class SceneState(TypedDict):
     """State for the scene builder graph."""
-    lecture_topic: str  # Short description of what we're learning
+    lecture: Lecture
     scene_voiceover: str   # Current slide/scene voiceover text
     scene_description: str     # Detailed description of the slide
     scene_code: str  # Generated Manim scene code
@@ -41,14 +41,14 @@ class Decision(str, Enum):
 
 class SceneCode(BaseModel):
     """Generated scene code structure."""
-    explanation: str = Field(description="Explanation of how the scene visualizes the concept")
+    thinking: str = Field(description="Thinking about the scene code structure")
     imports: str = Field(description="Import statements for the scene")
     scene_code: str = Field(description="The actual Manim scene code")
     scene_name: str = Field(description="Name of the Manim scene class")
 
 class SceneEvaluation(BaseModel):
     """Evaluation of scene execution."""
-    explanation: str = Field(description="Explanation for the decision")
+    thinking: str = Field(description="Thinking about the scene execution output")
     decision: Decision = Field(description="Decision to finish or retry")
 
 class SceneBuilder:
@@ -57,7 +57,7 @@ class SceneBuilder:
     def __init__(
         self,
         sandbox: modal.Sandbox,
-        model: str = "gpt-4o",
+        model: str = "claude-3-5-sonnet-latest",
     ):
         self.sandbox = sandbox
         self.model = model
@@ -101,20 +101,22 @@ class SceneBuilder:
         """Generates Manim scene code based on the learning content description."""
         logger.info(f"Generating scene, iteration {state.get('iterations', 0) + 1}")
         
-        llm = ChatOpenAI(
-            temperature=0, 
+        llm = ChatAnthropic(
+            temperature=0,
             model=self.model,
+            max_tokens=4096
         )
-        scene_tool = convert_to_openai_tool(SceneCode)
+        scene_tool = convert_to_anthropic_tool(SceneCode)
         llm_with_tool = llm.bind(
             tools=[scene_tool],
-            tool_choice={"type": "function", "function": {"name": "SceneCode"}}
+            tool_choice={"type": "tool", "name": "SceneCode"}
         )
         parser = PydanticToolsParser(tools=[SceneCode])
         
         template = """You are a Manim expert tasked with creating a visual scene for a learning concept.
 
 Topic Description: {lecture_topic}
+Additional Resources: {lecture_resources}
 Voiceover Text: {scene_voiceover}
 Detailed Description: {scene_description}
 
@@ -244,7 +246,7 @@ class TransformScene(Scene):
         
         prompt = PromptTemplate(
             template=template,
-            input_variables=["lecture_topic", "scene_voiceover", "scene_description", "previous_error", "iterations", "previous_scene_code"]
+            input_variables=["lecture_topic", "lecture_resources", "scene_voiceover", "scene_description", "previous_error", "iterations", "previous_scene_code"]
         )
         
         previous_error = state.get("error", "")
@@ -255,7 +257,8 @@ class TransformScene(Scene):
         chain = prompt | llm_with_tool | parser
         
         scene = chain.invoke({
-            "lecture_topic": state["lecture_topic"],
+            "lecture_topic": state["lecture"].topic,
+            "lecture_resources": state["lecture"].resources,
             "scene_voiceover": state["scene_voiceover"],
             "scene_description": state["scene_description"],
             "previous_error": previous_error,
@@ -311,14 +314,15 @@ class TransformScene(Scene):
         """Evaluates the scene execution results."""
         logger.info(f"Evaluating execution, iteration {state['iterations']}")
         
-        llm = ChatOpenAI(
-            temperature=0, 
+        llm = ChatAnthropic(
+            temperature=0,
             model=self.model,
+            max_tokens=4096
         )
-        eval_tool = convert_to_openai_tool(SceneEvaluation)
+        eval_tool = convert_to_anthropic_tool(SceneEvaluation)
         llm_with_tool = llm.bind(
             tools=[eval_tool],
-            tool_choice={"type": "function", "function": {"name": "SceneEvaluation"}}
+            tool_choice={"type": "tool", "name": "SceneEvaluation"}
         )
         parser = PydanticToolsParser(tools=[SceneEvaluation])
         
@@ -367,7 +371,7 @@ class TransformScene(Scene):
         })
         
         logger.info(f"Evaluation decision: {evaluation[0].decision}")
-        logger.info(f"Evaluation explanation: {evaluation[0].explanation}")
+        logger.info(f"Evaluation thinking: {evaluation[0].thinking}")
         
         return {
             **state,
@@ -433,7 +437,7 @@ class TransformScene(Scene):
         runnable = graph.compile()
         
         result = runnable.invoke({
-            "lecture_topic": lecture.topic,
+            "lecture": lecture,
             "scene_voiceover": scene.voiceover,
             "scene_description": scene.description,
             "scene_code": "",

@@ -18,6 +18,7 @@ class Scene(BaseSchema):
     status: SceneStatus = SceneStatus.PROCESSING
     index: Optional[int] = None
     version: Optional[int] = None
+    is_selected: Optional[bool] = None
     
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

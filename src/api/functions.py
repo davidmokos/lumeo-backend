@@ -1,3 +1,4 @@
+from datetime import datetime, time
 import os
 import modal
 import asyncio
@@ -11,7 +12,7 @@ from src.schema.lecture import Lecture, LectureStatus
 from src.database.lecture_repository import LectureRepository
 from src.database.storage import StorageClient, StorageBucket
 from src.schema.scene import Scene, SceneStatus
-from src.services.voiceover_service import add_voiceover_and_subtitles, create_empty_video, merge_videos
+from src.services.voiceover_service import add_voiceover_and_subtitles, create_empty_video, get_last_frame, merge_videos
 import logging
 from src.common import vol
 # Configure logging
@@ -66,6 +67,9 @@ def merge_scenes_function(lecture: Lecture, scenes: list[Scene]) -> Lecture:
         
         merge_videos(sandbox, video_paths, merged_video_path)
         logger.info("Videos merged successfully")
+        
+        last_frame_path = f"/data/lecture_{lecture.id}_last_frame.png"
+        get_last_frame(sandbox, video_paths[0], last_frame_path)
 
         sandbox.terminate()
 
@@ -74,12 +78,23 @@ def merge_scenes_function(lecture: Lecture, scenes: list[Scene]) -> Lecture:
         video_url = storage.upload_file(
             bucket=StorageBucket.LECTURES,
             file_path=merged_video_path,
-            destination_path=f"{lecture.id}/final.mp4"
+            destination_path=f"{lecture.id}/{datetime.now().strftime('%Y%m%d%H%M%S')}-final.mp4"
         )
+        
+        try:
+            last_frame_url = storage.upload_file(
+                bucket=StorageBucket.LECTURES,
+                file_path=last_frame_path,
+                destination_path=f"{lecture.id}/{datetime.now().strftime('%Y%m%d%H%M%S')}-last_frame.png"
+            )
+        except Exception as e:
+            logger.error(f"Error uploading last frame: {str(e)}")
+            last_frame_url = None
 
         # Update lecture
         lecture = lecture_repo.update(lecture.id, {
             "video_url": video_url,
+            "thumbnail_url": last_frame_url,
             "status": LectureStatus.DRAFT
         })
         
@@ -142,13 +157,14 @@ def generate_lecture_function(lecture: Lecture):
         
         # Create empty scenes
         scenes = []
-        for i, slide in enumerate(lecture_plan.slides):
+        for i, slide in enumerate(lecture_plan.slides, start=1):
             scene = Scene(
                 user_id=lecture.user_id,
                 lecture_id=lecture.id,
                 status=SceneStatus.PROCESSING,
                 index=i,
                 version=1,
+                is_selected=True,
                 description=slide.description,
                 voiceover=slide.voiceover,
             )
@@ -204,48 +220,20 @@ def generate_lecture_no_plan_function(lecture: Lecture):
         raise
 
 
-
 @app.function(image=ai_image, volumes=volumes, secrets=secrets)
-def debug_function():
-    lecture_repo = LectureRepository()
+def regenerate_scene_function(lecture: Lecture, scene: Scene):
+    generate_scene_function.remote(lecture, scene)
+    
     scene_repo = SceneRepository()
+    scenes = scene_repo.list_by_lecture(lecture_id=lecture.id)
     
-    # lecture = lecture_repo.get("43edbf3f-a9f6-4b7c-914d-1d5b5bdc6a0d")
-    # scenes = scene_repo.list_by_lecture(lecture_id=lecture.id)
+    # Group scenes by index and get the highest version for each
+    latest_scenes = {}
+    for s in scenes:
+        if s.index not in latest_scenes or s.version > latest_scenes[s.index].version:
+            latest_scenes[s.index] = s
     
-    # scenes.sort(key=lambda x: x.index)
+    # Convert to list and sort by index
+    sorted_scenes = sorted(latest_scenes.values(), key=lambda x: x.index)
     
-    # for scene in scenes:
-    #     print(scene.id)
-    
-    
-    # for scene in scenes:
-    #     print(scene.voiceover)
-    #     print("--------------------------------")
-    
-    # merge_scenes_function.remote(lecture, scenes)
-    
-    # generate_scene_function.remote(
-    #     lecture=lecture,
-    #     scene=scene
-    # )
-    
-    
-    sandbox = modal.Sandbox.create(
-        image=sandbox_image,
-        app=app,
-        volumes=volumes
-    )
-    
-    create_empty_video(
-        output_path="/data/empty.mp4"
-    )
-    
-    
-    sandbox.terminate()
-
-    
-
-@app.local_entrypoint()
-def main():
-    debug_function.remote()
+    merge_scenes_function.remote(lecture, sorted_scenes)
